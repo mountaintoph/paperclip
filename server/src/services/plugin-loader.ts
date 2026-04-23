@@ -29,7 +29,7 @@ import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import type { Db } from "@paperclipai/db";
 import type {
@@ -840,7 +840,7 @@ export function pluginLoader(
         await execFileAsync(
           "npm",
           ["install", spec, "--prefix", targetInstallDir, "--save", "--ignore-scripts"],
-          { timeout: 120_000 }, // 2 minute timeout for npm install
+          { timeout: 120_000, shell: true }, // 2 minute timeout for npm install
         );
       } catch (err) {
         throw new Error(`npm install failed for ${spec}: ${String(err)}`);
@@ -932,7 +932,7 @@ export function pluginLoader(
 
     try {
       // Dynamic import works for both .js (ESM) and .cjs (CJS) manifests
-      const mod = await import(manifestPath) as Record<string, unknown>;
+      const mod = await import(pathToFileURL(manifestPath).href) as Record<string, unknown>;
       // The manifest may be the default export or the module itself
       raw = mod["default"] ?? mod;
     } catch (err) {
