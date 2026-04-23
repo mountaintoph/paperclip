@@ -259,8 +259,17 @@ async function applyPendingMigrationsManually(
       );
       if (existingEntry) continue;
 
+      const allStatements = splitMigrationStatements(migrationContent);
+      const statementsToRun: string[] = [];
+      for (const statement of allStatements) {
+        const alreadyApplied = await migrationStatementAlreadyApplied(sql, statement);
+        if (!alreadyApplied) {
+          statementsToRun.push(statement);
+        }
+      }
+
       await runInTransaction(sql, async () => {
-        for (const statement of splitMigrationStatements(migrationContent)) {
+        for (const statement of statementsToRun) {
           await sql.unsafe(statement);
         }
 
@@ -373,11 +382,17 @@ async function constraintExists(
   return rows[0]?.exists ?? false;
 }
 
+function stripSqlComments(sql: string): string {
+  return sql
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ");
+}
+
 async function migrationStatementAlreadyApplied(
   sql: ReturnType<typeof postgres>,
   statement: string,
 ): Promise<boolean> {
-  const normalized = statement.replace(/\s+/g, " ").trim();
+  const normalized = stripSqlComments(statement).replace(/\s+/g, " ").trim();
 
   const createTableMatch = normalized.match(/^CREATE TABLE(?: IF NOT EXISTS)? "([^"]+)"/i);
   if (createTableMatch) {
@@ -391,9 +406,21 @@ async function migrationStatementAlreadyApplied(
     return columnExists(sql, addColumnMatch[1], addColumnMatch[2]);
   }
 
+  const dropColumnMatch = normalized.match(
+    /^ALTER TABLE "([^"]+)" DROP COLUMN(?: IF EXISTS)? "([^"]+)"/i,
+  );
+  if (dropColumnMatch) {
+    return !(await columnExists(sql, dropColumnMatch[1], dropColumnMatch[2]));
+  }
+
   const createIndexMatch = normalized.match(/^CREATE (?:UNIQUE )?INDEX(?: IF NOT EXISTS)? "([^"]+)"/i);
   if (createIndexMatch) {
     return indexExists(sql, createIndexMatch[1]);
+  }
+
+  const dropIndexMatch = normalized.match(/^DROP INDEX(?: IF EXISTS)?(?: CONCURRENTLY)? (?:"[^"]+"\.)?"([^"]+)"/i);
+  if (dropIndexMatch) {
+    return !(await indexExists(sql, dropIndexMatch[1]));
   }
 
   const addConstraintMatch = normalized.match(/^ALTER TABLE "([^"]+)" ADD CONSTRAINT "([^"]+)"/i);
